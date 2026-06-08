@@ -244,7 +244,7 @@ function enterRoom(){
   document.getElementById('roomCode').textContent=state.room;
   state.scores[state.me.id]=0;
   show('s-room');
-  state.channel=state.supa.channel('a1b-'+state.room,{config:{broadcast:{self:false},presence:{key:state.me.id}}});
+  state.channel=state.supa.channel('a1b-'+state.room,{config:{broadcast:{self:true},presence:{key:state.me.id}}});
   state.channel
     .on('broadcast',{event:'msg'},({payload})=>onMsg(payload))
     .on('presence',{event:'sync'},()=>onPresence())
@@ -261,7 +261,7 @@ function onPresence(){
   state.roster=roster.sort((a,b)=>a.id<b.id?-1:1);
   // dealer auto-skip if current turn player left mid-round
   if(state.roundActive && state.dealerId===state.me.id && state.currentTurnId && !state.presentIds.has(state.currentTurnId)){
-    advanceTurnAsDealer(true);
+    advanceTurnAsDealer();
   }
   render();
 }
@@ -427,10 +427,15 @@ function render(roundWon,winPayload){
   // dealer skip control
   document.getElementById('dealerControls').style.display = (state.roundActive && state.dealerId===state.me.id)?'flex':'none';
 }
-function flashBanner(msg){ const b=document.getElementById('banner'); const old=b.textContent; b.textContent=msg; setTimeout(()=>render(),1800); }
+function flashBanner(msg){ const b=document.getElementById('banner'); b.textContent=msg; setTimeout(()=>render(),1800); }
 function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-document.getElementById('btnCopy').onclick=()=>{ navigator.clipboard?.writeText(state.room); const b=document.getElementById('btnCopy'); b.textContent='已复制 ✓'; setTimeout(()=>b.textContent='复制房间号',1500); };
+document.getElementById('btnCopy').onclick=async()=>{
+  const b=document.getElementById('btnCopy');
+  try{ await navigator.clipboard.writeText(state.room); b.textContent='已复制 ✓'; }
+  catch(e){ b.textContent='房间号: '+state.room; }
+  setTimeout(()=>b.textContent='复制房间号',2000);
+};
 
 loadConfig();
 </script>
