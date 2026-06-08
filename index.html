@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>1A1B 多人竞速</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:#0e0e12; --surface:#17171f; --surface2:#1f1f2a;
+    --border:rgba(255,255,255,0.07);
+    --accent:#c8f04a; --accent-dim:rgba(200,240,74,0.12);
+    --blue:#4ac8f0; --blue-dim:rgba(74,200,240,0.12);
+    --gold:#f0c84a; --gold-dim:rgba(240,200,74,0.12);
+    --text:#f0f0f0; --muted:#6b6b80; --danger:#f04a4a;
+    --radius:10px; --mono:'Space Mono',monospace; --sans:'Noto Sans SC',sans-serif;
+  }
+  body{ background:var(--bg); color:var(--text); font-family:var(--sans);
+    min-height:100vh; display:flex; align-items:flex-start; justify-content:center; padding:2rem 1rem; }
+  body::before{ content:''; position:fixed; inset:0; z-index:0; pointer-events:none;
+    background-image:linear-gradient(rgba(255,255,255,0.015) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.015) 1px,transparent 1px);
+    background-size:40px 40px; }
+  .container{ position:relative; z-index:1; width:100%; max-width:560px; }
+  .screen{ display:none; } .screen.active{ display:block; }
+
+  h1{ font-family:var(--mono); font-size:30px; font-weight:700; color:var(--accent); letter-spacing:-1px; }
+  .tag{ font-size:13px; color:var(--muted); font-family:var(--mono); margin-top:4px; }
+  .lead{ font-size:14px; color:var(--muted); margin:6px 0 0; line-height:1.6; }
+
+  .card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; margin-top:1.25rem; }
+  label{ display:block; font-size:12px; color:var(--muted); font-family:var(--mono); margin-bottom:6px; }
+  input.field{ width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:8px;
+    color:var(--text); font-family:var(--mono); font-size:15px; padding:11px 12px; outline:none; transition:border-color .15s; }
+  input.field:focus{ border-color:rgba(200,240,74,0.5); }
+  .row2{ display:flex; gap:10px; } .row2 > *{ flex:1; }
+  button{ background:var(--accent); color:#0e0e12; border:none; border-radius:8px;
+    font-family:var(--mono); font-size:14px; font-weight:700; padding:12px 18px; cursor:pointer;
+    transition:opacity .15s,transform .1s; white-space:nowrap; }
+  button:hover{ opacity:.85; } button:active{ transform:scale(.97); } button:disabled{ opacity:.3; cursor:not-allowed; }
+  button.ghost{ background:transparent; color:var(--accent); border:1px solid rgba(200,240,74,0.4); }
+  button.ghost:hover{ background:var(--accent-dim); opacity:1; }
+  .full{ width:100%; margin-top:14px; }
+  .err{ color:var(--danger); font-size:12px; font-family:var(--mono); min-height:18px; margin-top:8px; }
+  .note{ font-size:12px; color:var(--muted); line-height:1.7; margin-top:12px; }
+  .note code{ font-family:var(--mono); color:var(--accent); } a{ color:var(--blue); }
+
+  /* room header */
+  .roomhdr{ display:flex; align-items:center; justify-content:space-between; margin-top:1rem; }
+  .roomhdr .code{ font-family:var(--mono); font-size:14px; color:var(--muted); }
+  .roomhdr .code b{ color:var(--accent); font-size:18px; letter-spacing:3px; }
+
+  /* scoreboard */
+  .scoreboard{ display:flex; flex-direction:column; gap:6px; margin-top:1rem; }
+  .pl{ display:flex; align-items:center; gap:10px; padding:9px 12px; background:var(--surface);
+    border:1px solid var(--border); border-radius:8px; }
+  .pl.turn{ border-color:rgba(200,240,74,0.45); background:var(--accent-dim); }
+  .pl .pdot{ width:8px; height:8px; border-radius:50%; background:var(--muted); flex:0 0 auto; }
+  .pl.turn .pdot{ background:var(--accent); }
+  .pl .pname{ font-size:14px; font-weight:500; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pl .ptag{ font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:12px; }
+  .ptag.dealer{ background:var(--gold-dim); color:var(--gold); }
+  .ptag.you{ background:var(--blue-dim); color:var(--blue); }
+  .pl .pscore{ font-family:var(--mono); font-size:14px; font-weight:700; color:var(--accent); flex:0 0 auto; }
+
+  /* status banner */
+  .banner{ margin-top:1rem; padding:12px 14px; border-radius:8px; font-size:13px; font-family:var(--mono);
+    background:var(--surface2); border:1px solid var(--border); text-align:center; color:var(--text); min-height:44px;
+    display:flex; align-items:center; justify-content:center; }
+  .banner.win{ background:var(--accent-dim); border-color:rgba(200,240,74,0.4); color:var(--accent); font-weight:700; }
+
+  /* dealer secret box */
+  .dealerbox{ margin-top:1rem; padding:12px 14px; border-radius:8px; background:var(--gold-dim);
+    border:1px solid rgba(240,200,74,0.35); text-align:center; }
+  .dealerbox .lab{ font-size:11px; font-family:var(--mono); color:var(--gold); margin-bottom:4px; }
+  .dealerbox .num{ font-family:var(--mono); font-size:28px; font-weight:700; color:var(--gold); letter-spacing:8px; }
+  .dealerbox .sub{ font-size:11px; color:var(--muted); margin-top:4px; }
+
+  /* feed */
+  .feed-title{ font-family:var(--mono); font-size:12px; color:var(--muted); margin:1.25rem 0 8px; text-transform:uppercase; }
+  .feed{ display:flex; flex-direction:column; gap:5px; max-height:280px; overflow-y:auto; }
+  .frow{ display:flex; align-items:center; justify-content:space-between; padding:9px 12px;
+    background:var(--surface); border:1px solid var(--border); border-radius:7px; animation:slide .2s ease; }
+  .frow.mine{ border-color:rgba(74,200,240,0.3); }
+  .frow.winrow{ border-color:rgba(200,240,74,0.5); background:var(--accent-dim); }
+  @keyframes slide{ from{opacity:0;transform:translateY(-5px);} to{opacity:1;transform:translateY(0);} }
+  .frow .who{ font-size:13px; color:var(--muted); flex:0 0 auto; max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .frow .num{ font-family:var(--mono); font-size:18px; font-weight:700; letter-spacing:3px; flex:1; text-align:center; }
+  .frow .res{ font-family:var(--mono); font-size:13px; font-weight:700; flex:0 0 auto; }
+  .res .a{ color:var(--accent); } .res .b{ color:var(--blue); }
+
+  /* input */
+  .play-wrap{ margin-top:1.25rem; }
+  .play-row{ display:flex; gap:10px; }
+  #guessInput{ flex:1; width:0; background:var(--surface2); border:1px solid var(--border); border-radius:8px;
+    color:var(--text); font-family:var(--mono); font-size:22px; font-weight:700; letter-spacing:8px;
+    text-align:center; padding:12px 8px; outline:none; }
+  #guessInput:focus{ border-color:rgba(200,240,74,0.5); }
+  #guessInput::placeholder{ color:var(--muted); letter-spacing:4px; font-size:15px; }
+  #guessInput:disabled{ opacity:.4; }
+
+  .host-controls{ display:flex; gap:10px; margin-top:1rem; }
+  .host-controls button{ flex:1; }
+
+  footer{ margin-top:1.5rem; text-align:center; font-size:11px; font-family:var(--mono); color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- CONFIG -->
+  <section class="screen" id="s-config">
+    <h1>1A1B</h1><p class="tag">多人竞速 · 首次配置</p>
+    <div class="card">
+      <label>SUPABASE PROJECT URL</label>
+      <input class="field" id="cfgUrl" placeholder="https://xxxx.supabase.co" autocomplete="off">
+      <div style="height:12px"></div>
+      <label>SUPABASE ANON KEY（公开密钥，可放前端）</label>
+      <input class="field" id="cfgKey" placeholder="eyJhbGciOi..." autocomplete="off">
+      <div class="err" id="cfgErr"></div>
+      <button class="full" id="cfgSave">保存并继续</button>
+      <p class="note">在 <a href="https://supabase.com" target="_blank">supabase.com</a> 免费建一个 project →
+        <code>Settings → API</code>，复制 <code>Project URL</code> 与 <code>anon public</code> key 填入。配置存本机浏览器。</p>
+    </div>
+  </section>
+
+  <!-- LOBBY -->
+  <section class="screen" id="s-lobby">
+    <h1>1A1B</h1><p class="tag">多人竞速</p>
+    <p class="lead">多人同房，每局由一名轮值「裁判」随机出一个 4 位不重复数字，其余人轮流猜，谁先猜中谁得分。裁判本局不猜，每局轮换。</p>
+    <div class="card">
+      <label>你的昵称</label>
+      <input class="field" id="nick" placeholder="输入昵称" maxlength="12" autocomplete="off">
+      <button class="full" id="btnCreate">创建房间</button>
+      <div style="display:flex; align-items:center; gap:10px; margin:16px 0; color:var(--muted); font-family:var(--mono); font-size:12px;">
+        <div style="flex:1;height:1px;background:var(--border)"></div>或<div style="flex:1;height:1px;background:var(--border)"></div>
+      </div>
+      <label>输入房间号加入</label>
+      <div class="row2">
+        <input class="field" id="joinCode" placeholder="如 8A2K" maxlength="4" autocomplete="off" style="text-transform:uppercase;">
+        <button class="ghost" id="btnJoin" style="flex:0 0 auto;">加入</button>
+      </div>
+      <div class="err" id="lobbyErr"></div>
+    </div>
+  </section>
+
+  <!-- ROOM -->
+  <section class="screen" id="s-room">
+    <h1>1A1B</h1>
+    <div class="roomhdr">
+      <span class="code">房间 <b id="roomCode">----</b></span>
+      <button class="ghost" id="btnCopy" style="padding:8px 14px;font-size:12px;">复制房间号</button>
+    </div>
+
+    <div class="scoreboard" id="scoreboard"></div>
+
+    <div class="banner" id="banner">等待玩家加入…</div>
+
+    <div class="dealerbox" id="dealerbox" style="display:none;">
+      <div class="lab">本局答案（只有你这个裁判看得到）</div>
+      <div class="num" id="dealerNum">----</div>
+      <div class="sub">你本局不猜，负责出题。可点下方「跳过当前玩家」处理掉线者。</div>
+    </div>
+
+    <div class="feed-title" id="feedTitle" style="display:none;">本局猜测记录</div>
+    <div class="feed" id="feed"></div>
+
+    <div class="play-wrap" id="playWrap" style="display:none;">
+      <div class="play-row">
+        <input id="guessInput" type="text" inputmode="numeric" maxlength="4" placeholder="_ _ _ _" autocomplete="off" disabled>
+        <button id="btnGuess" disabled>猜</button>
+      </div>
+      <div class="err" id="playErr"></div>
+    </div>
+
+    <div class="host-controls" id="hostControls" style="display:none;">
+      <button id="btnStart">开始游戏</button>
+    </div>
+    <div class="host-controls" id="dealerControls" style="display:none;">
+      <button class="ghost" id="btnSkip">跳过当前玩家</button>
+    </div>
+  </section>
+
+  <footer>Bulls &amp; Cows · 多人竞速 · Supabase Realtime</footer>
+</div>
+
+<script>
+// 内嵌的 Supabase 配置：publishable key 可安全放在前端，玩家无需任何配置。
+// 想换成别的项目时，改这两行即可。
+const EMBEDDED = {
+  url: 'https://fqgyksxxgdbipiaulvix.supabase.co',
+  key: 'sb_publishable_g1GCfqB2Iwrs0CUDewYMaw_NsnWcf6s'
+};
+const LS = { url:'a1b_supa_url', key:'a1b_supa_key' };
+
+const state = {
+  supa:null, channel:null,
+  me:{ id:(crypto.randomUUID?crypto.randomUUID():'p'+Math.random().toString(36).slice(2)), name:'' },
+  isHost:false,
+  room:'',
+  presentIds:new Set(),
+  roster:[],          // [{id,name}] current known players
+  scores:{},          // id -> wins
+  round:0,
+  dealerId:null,
+  turnOrder:[],       // ids of guessers this round
+  currentTurnId:null,
+  secret:'',          // only on dealer client
+  roundActive:false,
+};
+
+function show(id){ document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
+
+/* ---------- config ---------- */
+function loadConfig(){
+  if(EMBEDDED.url && EMBEDDED.key){ initSupabase(EMBEDDED.url, EMBEDDED.key); show('s-lobby'); return; }
+  const url=localStorage.getItem(LS.url)||'', key=localStorage.getItem(LS.key)||'';
+  if(url&&key){ initSupabase(url,key); show('s-lobby'); } else show('s-config');
+}
+function initSupabase(url,key){ state.supa=supabase.createClient(url,key,{realtime:{params:{eventsPerSecond:20}}}); }
+document.getElementById('cfgSave').onclick=()=>{
+  const url=document.getElementById('cfgUrl').value.trim(), key=document.getElementById('cfgKey').value.trim(), err=document.getElementById('cfgErr');
+  if(!/^https:\/\/.+\.supabase\.co\/?$/.test(url)){ err.textContent='URL 应类似 https://xxxx.supabase.co'; return; }
+  if(key.length<30){ err.textContent='anon key 看起来不对'; return; }
+  localStorage.setItem(LS.url,url); localStorage.setItem(LS.key,key); initSupabase(url,key); err.textContent=''; show('s-lobby');
+};
+/* ---------- lobby ---------- */
+function randCode(){ const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s=''; for(let i=0;i<4;i++)s+=c[Math.floor(Math.random()*c.length)]; return s; }
+document.getElementById('btnCreate').onclick=()=>{
+  const name=document.getElementById('nick').value.trim();
+  if(!name){ document.getElementById('lobbyErr').textContent='先填个昵称'; return; }
+  state.me.name=name; state.isHost=true; state.room=randCode(); enterRoom();
+};
+document.getElementById('btnJoin').onclick=()=>{
+  const name=document.getElementById('nick').value.trim(), code=document.getElementById('joinCode').value.trim().toUpperCase(), err=document.getElementById('lobbyErr');
+  if(!name){ err.textContent='先填个昵称'; return; }
+  if(code.length!==4){ err.textContent='房间号是 4 位'; return; }
+  state.me.name=name; state.isHost=false; state.room=code; enterRoom();
+};
+
+/* ---------- channel ---------- */
+function enterRoom(){
+  document.getElementById('roomCode').textContent=state.room;
+  state.scores[state.me.id]=0;
+  show('s-room');
+  state.channel=state.supa.channel('a1b-'+state.room,{config:{broadcast:{self:false},presence:{key:state.me.id}}});
+  state.channel
+    .on('broadcast',{event:'msg'},({payload})=>onMsg(payload))
+    .on('presence',{event:'sync'},()=>onPresence())
+    .subscribe(s=>{ if(s==='SUBSCRIBED'){ state.channel.track({id:state.me.id,name:state.me.name}); } });
+  render();
+}
+function onPresence(){
+  const st=state.channel.presenceState();
+  const members=[]; Object.values(st).forEach(arr=>arr.forEach(m=>members.push(m)));
+  state.presentIds=new Set(members.map(m=>m.id));
+  // build roster (dedupe by id), keep scores
+  const seen={}; const roster=[];
+  members.forEach(m=>{ if(!seen[m.id]){ seen[m.id]=1; roster.push({id:m.id,name:m.name}); if(state.scores[m.id]===undefined) state.scores[m.id]=0; } });
+  state.roster=roster.sort((a,b)=>a.id<b.id?-1:1);
+  // dealer auto-skip if current turn player left mid-round
+  if(state.roundActive && state.dealerId===state.me.id && state.currentTurnId && !state.presentIds.has(state.currentTurnId)){
+    advanceTurnAsDealer(true);
+  }
+  render();
+}
+
+/* ---------- round control (host) ---------- */
+document.getElementById('btnStart').onclick=startNextRound;
+function startNextRound(){
+  if(!state.isHost) return;
+  const present=state.roster.filter(p=>state.presentIds.has(p.id));
+  if(present.length<2){ flashBanner('至少需要 2 人才能开始'); return; }
+  state.round++;
+  // order: rotate so host is first, then rotate dealer by round
+  let order=present.slice();
+  const hi=order.findIndex(p=>p.id===state.me.id);
+  order=order.slice(hi).concat(order.slice(0,hi));
+  const dealerId=order[(state.round-1)%order.length].id;
+  const turnOrder=order.filter(p=>p.id!==dealerId).map(p=>p.id);
+  state.channel.send({type:'broadcast',event:'msg',payload:{
+    event:'new_round', from:state.me.id, round:state.round, dealerId, players:order, turnOrder
+  }});
+  applyNewRound({round:state.round,dealerId,players:order,turnOrder});
+}
+function applyNewRound(p){
+  state.round=p.round; state.dealerId=p.dealerId; state.turnOrder=p.turnOrder;
+  state.currentTurnId=p.turnOrder[0]||null; state.roundActive=true; state.secret='';
+  state.roster=p.players.slice();
+  p.players.forEach(pl=>{ if(state.scores[pl.id]===undefined) state.scores[pl.id]=0; });
+  document.getElementById('feed').innerHTML='';
+  if(state.dealerId===state.me.id){ state.secret=genSecret(); }
+  render();
+}
+function genSecret(){ const d=[0,1,2,3,4,5,6,7,8,9]; for(let i=d.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]];} return d.slice(0,4).join(''); }
+
+/* ---------- guessing ---------- */
+document.getElementById('btnGuess').onclick=submitGuess;
+document.getElementById('guessInput').addEventListener('keydown',e=>{ if(e.key==='Enter') submitGuess(); });
+function submitGuess(){
+  if(!state.roundActive || state.currentTurnId!==state.me.id || state.dealerId===state.me.id) return;
+  const input=document.getElementById('guessInput'), err=document.getElementById('playErr'), v=input.value.trim();
+  if(!/^\d{4}$/.test(v)){ err.textContent='请输入 4 位数字'; return; }
+  if(new Set(v).size!==4){ err.textContent='不能有重复数字'; return; }
+  err.textContent=''; input.value='';
+  state.channel.send({type:'broadcast',event:'msg',payload:{event:'guess',from:state.me.id,name:state.me.name,number:v}});
+}
+function evaluate(secret,guess){ let a=0,b=0; for(let i=0;i<4;i++){ if(guess[i]===secret[i])a++; else if(secret.includes(guess[i]))b++; } return {a,b}; }
+
+// dealer receives a guess
+function onGuess(p){
+  if(state.dealerId!==state.me.id || !state.roundActive) return;
+  if(p.from!==state.currentTurnId) return; // not their turn, ignore
+  const {a,b}=evaluate(state.secret,p.number);
+  const win=(a===4);
+  const idx=state.turnOrder.indexOf(p.from);
+  let nextId=null;
+  if(!win){ nextId=nextActiveId(idx); }
+  const payload={event:'result', from:state.me.id, guesserId:p.from, guesserName:p.name, number:p.number, a, b, win, nextTurnId:nextId};
+  if(win) payload.secret=state.secret;
+  state.channel.send({type:'broadcast',event:'msg',payload});
+  applyResult(payload);
+}
+function nextActiveId(fromIdx){
+  const n=state.turnOrder.length;
+  for(let k=1;k<=n;k++){ const id=state.turnOrder[(fromIdx+k)%n]; if(state.presentIds.has(id)) return id; }
+  return null;
+}
+function advanceTurnAsDealer(){
+  if(state.dealerId!==state.me.id||!state.roundActive) return;
+  const idx=state.turnOrder.indexOf(state.currentTurnId);
+  const nextId=nextActiveId(idx<0?0:idx);
+  const payload={event:'turn',from:state.me.id,nextTurnId:nextId};
+  state.channel.send({type:'broadcast',event:'msg',payload});
+  state.currentTurnId=nextId; render();
+}
+document.getElementById('btnSkip').onclick=()=>advanceTurnAsDealer();
+
+function applyResult(p){
+  appendFeed(p);
+  if(p.win){
+    state.roundActive=false; state.currentTurnId=null;
+    state.scores[p.guesserId]=(state.scores[p.guesserId]||0)+1;
+    if(p.secret) state.secret=p.secret;
+    render(true,p);
+  } else {
+    state.currentTurnId=p.nextTurnId; render();
+  }
+}
+function appendFeed(p){
+  const feed=document.getElementById('feed');
+  const row=document.createElement('div');
+  row.className='frow'+(p.guesserId===state.me.id?' mine':'')+(p.win?' winrow':'');
+  row.innerHTML=`<span class="who">${escapeHtml(p.guesserName)}</span>
+    <span class="num">${p.number}</span>
+    <span class="res"><span class="a">${p.a}A</span> <span class="b">${p.b}B</span></span>`;
+  feed.appendChild(row); feed.scrollTop=feed.scrollHeight;
+}
+
+/* ---------- messaging ---------- */
+function onMsg(p){
+  if(!p||p.from===state.me.id) return;
+  switch(p.event){
+    case 'new_round': applyNewRound(p); break;
+    case 'guess': onGuess(p); break;
+    case 'result': applyResult(p); break;
+    case 'turn': state.currentTurnId=p.nextTurnId; render(); break;
+  }
+}
+
+/* ---------- rendering ---------- */
+function nameOf(id){ const p=state.roster.find(x=>x.id===id); return p?p.name:'?'; }
+function render(roundWon,winPayload){
+  // scoreboard
+  const sb=document.getElementById('scoreboard'); sb.innerHTML='';
+  const list = state.roster.length? state.roster : [{id:state.me.id,name:state.me.name}];
+  list.forEach(p=>{
+    const isTurn = state.roundActive && p.id===state.currentTurnId;
+    const isDealer = p.id===state.dealerId;
+    const div=document.createElement('div'); div.className='pl'+(isTurn?' turn':'');
+    let tags='';
+    if(isDealer) tags+='<span class="ptag dealer">裁判</span>';
+    if(p.id===state.me.id) tags+='<span class="ptag you">你</span>';
+    div.innerHTML=`<span class="pdot"></span><span class="pname">${escapeHtml(p.name)}</span>${tags}
+      <span class="pscore">${state.scores[p.id]||0}</span>`;
+    sb.appendChild(div);
+  });
+
+  // banner
+  const banner=document.getElementById('banner');
+  if(roundWon && winPayload){
+    banner.className='banner win';
+    banner.textContent=`🎉 ${winPayload.guesserName} 猜中 ${winPayload.number}！答案就是它`;
+  } else if(state.roundActive){
+    banner.className='banner';
+    if(state.dealerId===state.me.id){ banner.textContent=`你是本局裁判 · 轮到 ${nameOf(state.currentTurnId)} 猜`; }
+    else if(state.currentTurnId===state.me.id){ banner.textContent='轮到你猜了！'; }
+    else { banner.textContent=`等待 ${nameOf(state.currentTurnId)} 猜…`; }
+  } else {
+    banner.className='banner';
+    const present=state.roster.filter(p=>state.presentIds.has(p.id)).length;
+    banner.textContent = state.round===0 ? (present<2?`房间里 ${present} 人，至少 2 人开始`:'准备就绪，等房主开始') : '本局结束，等房主开下一局';
+  }
+
+  // dealer secret box
+  const db=document.getElementById('dealerbox');
+  if(state.roundActive && state.dealerId===state.me.id){ db.style.display='block'; document.getElementById('dealerNum').textContent=state.secret.split('').join(' '); }
+  else db.style.display='none';
+
+  // feed visibility
+  document.getElementById('feedTitle').style.display = (state.round>0)?'block':'none';
+
+  // input
+  const pw=document.getElementById('playWrap'), input=document.getElementById('guessInput'), btn=document.getElementById('btnGuess');
+  const iAmGuesser = state.roundActive && state.dealerId!==state.me.id;
+  pw.style.display = iAmGuesser? 'block':'none';
+  const myTurn = iAmGuesser && state.currentTurnId===state.me.id;
+  input.disabled=!myTurn; btn.disabled=!myTurn;
+  if(myTurn) input.focus();
+
+  // host controls
+  const hc=document.getElementById('hostControls');
+  if(state.isHost && !state.roundActive){ hc.style.display='flex'; document.getElementById('btnStart').textContent = state.round===0?'开始游戏':'开下一局'; }
+  else hc.style.display='none';
+
+  // dealer skip control
+  document.getElementById('dealerControls').style.display = (state.roundActive && state.dealerId===state.me.id)?'flex':'none';
+}
+function flashBanner(msg){ const b=document.getElementById('banner'); const old=b.textContent; b.textContent=msg; setTimeout(()=>render(),1800); }
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+document.getElementById('btnCopy').onclick=()=>{ navigator.clipboard?.writeText(state.room); const b=document.getElementById('btnCopy'); b.textContent='已复制 ✓'; setTimeout(()=>b.textContent='复制房间号',1500); };
+
+loadConfig();
+</script>
+</body>
+</html>
