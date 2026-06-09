@@ -1,0 +1,72 @@
+# 1A1B 多人竞速
+
+一个浏览器里就能跑的 Bulls & Cows（猜数字）游戏。单文件、无后端、靠 Supabase Realtime 做多人房间。
+
+线上访问：把 `index.html` 部署到任何静态站点即可（GitHub Pages、Vercel、Netlify、本地双击打开都行）。
+
+## 玩法
+
+每局由一名轮值「裁判」随机出一个 4 位不重复数字，其余玩家轮流猜。
+
+- `A` = 数字和位置都对的个数
+- `B` = 数字对、位置不对的个数
+- 谁先猜出 4A 谁得分，裁判每局轮换
+
+## 功能
+
+**多人模式**
+- 房主创建房间生成 4 位房间号，其他人输入房间号加入
+- 房间内裁判每局轮换，裁判本局不猜
+- 实时同步出题/猜测/结果到所有玩家
+- 房主离线后自动迁移给在线玩家中 ID 最小的那位
+- 裁判离线或所有猜题者全部离线时自动作废本局
+- 中途加入的玩家会自动同步现有比分
+
+**单人模式**
+- 大厅点「单人挑战」直接开始，不联网、不需要 Supabase 配置
+- 完全本地评估，「再来一局」可无限重玩
+
+**草稿区（只对猜题者可见）**
+- 0–9 数字状态网格，点击循环切换：未知 → 排除 → 可能 → 确定
+- 自由文本框，记任何你想记的
+- 每局自动清空，避免上局的推理误导下局
+
+**其他**
+- 玩家 ID 持久化到 localStorage，刷新页面后身份和分数仍能恢复
+- 可手动「离开房间」回大厅，关闭标签页时自动释放 presence
+- 在线/离线玩家在计分板上有视觉区分
+
+## 配置
+
+代码内嵌了一个 Supabase publishable key 可以直接用。想换成自己的项目：
+
+1. 去 [supabase.com](https://supabase.com) 免费建一个 project（不需要建表，只用 Realtime）
+2. 打开 `Settings → API`，复制 `Project URL` 和 `anon public` key
+3. 修改 `index.html` 顶部的 `EMBEDDED` 常量：
+
+```js
+const EMBEDDED = {
+  url: 'https://你的项目.supabase.co',
+  key: '你的 publishable key',
+};
+```
+
+如果留空 `EMBEDDED`，首次打开会进入一个配置页让访客自己填，配置存浏览器 localStorage。
+
+## 技术栈
+
+- 纯静态 HTML/CSS/JS，单文件 `index.html`，零构建
+- [Supabase Realtime](https://supabase.com/docs/guides/realtime) 做广播和 presence
+- 字体走 Google Fonts CDN
+
+## 限制与已知问题
+
+- 游戏逻辑全在客户端：秘密数字在裁判的浏览器里，A/B 评估也在裁判端，懂技术的人开 DevTools 能作弊
+- 4 位房间号约有 100 万种组合，理论上人数多了会撞码
+- 单人模式的分数不会保存到下次
+
+要把这些做严肃，得把评判逻辑搬到 Supabase Edge Function，但那就不是单文件了。
+
+## 协议
+
+随便用。
