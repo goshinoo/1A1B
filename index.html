@@ -58,6 +58,8 @@
   .pl.turn{ border-color:rgba(200,240,74,0.45); background:var(--accent-dim); }
   .pl .pdot{ width:8px; height:8px; border-radius:50%; background:var(--muted); flex:0 0 auto; }
   .pl.turn .pdot{ background:var(--accent); }
+  .pl.offline{ opacity:.45; }
+  .pl.offline .pdot{ background:var(--danger) !important; }
   .pl .pname{ font-size:14px; font-weight:500; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .pl .ptag{ font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:12px; }
   .ptag.dealer{ background:var(--gold-dim); color:var(--gold); }
@@ -150,7 +152,10 @@
     <h1>1A1B</h1>
     <div class="roomhdr">
       <span class="code">房间 <b id="roomCode">----</b></span>
-      <button class="ghost" id="btnCopy" style="padding:8px 14px;font-size:12px;">复制房间号</button>
+      <div style="display:flex;gap:8px;">
+        <button class="ghost" id="btnCopy" style="padding:8px 14px;font-size:12px;">复制房间号</button>
+        <button class="ghost" id="btnLeave" style="padding:8px 14px;font-size:12px;border-color:rgba(240,74,74,0.4);color:var(--danger);">离开</button>
+      </div>
     </div>
 
     <div class="scoreboard" id="scoreboard"></div>
@@ -188,6 +193,8 @@
 <script>
 // 内嵌的 Supabase 配置：publishable key 可安全放在前端，玩家无需任何配置。
 // 想换成别的项目时，改这两行即可。
+const _pid=(()=>{const k='a1b_pid',v=localStorage.getItem(k)||(crypto.randomUUID?crypto.randomUUID():'p'+Math.random().toString(36).slice(2));localStorage.setItem(k,v);return v;})();
+
 const EMBEDDED = {
   url: 'https://fqgyksxxgdbipiaulvix.supabase.co',
   key: 'sb_publishable_g1GCfqB2Iwrs0CUDewYMaw_NsnWcf6s'
@@ -196,7 +203,7 @@ const LS = { url:'a1b_supa_url', key:'a1b_supa_key' };
 
 const state = {
   supa:null, channel:null,
-  me:{ id:(crypto.randomUUID?crypto.randomUUID():'p'+Math.random().toString(36).slice(2)), name:'' },
+  me:{ id:_pid, name:'' },
   isHost:false,
   room:'',
   presentIds:new Set(),
@@ -244,23 +251,45 @@ function enterRoom(){
   document.getElementById('roomCode').textContent=state.room;
   state.scores[state.me.id]=0;
   show('s-room');
+  document.getElementById('banner').textContent='连接中…';
   state.channel=state.supa.channel('a1b-'+state.room,{config:{broadcast:{self:true},presence:{key:state.me.id}}});
   state.channel
     .on('broadcast',{event:'msg'},({payload})=>onMsg(payload))
     .on('presence',{event:'sync'},()=>onPresence())
-    .subscribe(s=>{ if(s==='SUBSCRIBED'){ state.channel.track({id:state.me.id,name:state.me.name}); } });
+    .subscribe(s=>{
+      if(s==='SUBSCRIBED'){ state.channel.track({id:state.me.id,name:state.me.name,isHost:state.isHost}); }
+      else if(s==='CHANNEL_ERROR'||s==='TIMED_OUT'){ document.getElementById('banner').textContent='连接失败，请刷新重试'; }
+    });
   render();
 }
 function onPresence(){
   const st=state.channel.presenceState();
   const members=[]; Object.values(st).forEach(arr=>arr.forEach(m=>members.push(m)));
-  state.presentIds=new Set(members.map(m=>m.id));
+  const newPresentIds=new Set(members.map(m=>m.id));
+  const newcomers=[...newPresentIds].filter(id=>!state.presentIds.has(id)&&id!==state.me.id);
+  state.presentIds=newPresentIds;
   // build roster (dedupe by id), keep scores
   const seen={}; const roster=[];
   members.forEach(m=>{ if(!seen[m.id]){ seen[m.id]=1; roster.push({id:m.id,name:m.name}); if(state.scores[m.id]===undefined) state.scores[m.id]=0; } });
   state.roster=roster.sort((a,b)=>a.id<b.id?-1:1);
+  // host migration: if no host left, lowest-ID player takes over
+  if(!members.some(m=>m.isHost)&&state.roster.length>0&&state.roster[0].id===state.me.id&&!state.isHost){
+    state.isHost=true;
+    state.channel.track({id:state.me.id,name:state.me.name,isHost:true});
+  }
+  // sync scores/round state to newcomers
+  if(state.isHost&&newcomers.length>0){
+    state.channel.send({type:'broadcast',event:'msg',payload:{
+      event:'sync_state',from:state.me.id,scores:{...state.scores},round:state.round,
+      roundActive:state.roundActive,dealerId:state.dealerId,currentTurnId:state.currentTurnId,turnOrder:state.turnOrder.slice()
+    }});
+  }
+  // abort round if dealer left (host handles)
+  if(state.roundActive&&state.isHost&&state.dealerId&&!state.presentIds.has(state.dealerId)){
+    abortRound(); return;
+  }
   // dealer auto-skip if current turn player left mid-round
-  if(state.roundActive && state.dealerId===state.me.id && state.currentTurnId && !state.presentIds.has(state.currentTurnId)){
+  if(state.roundActive&&state.dealerId===state.me.id&&state.currentTurnId&&!state.presentIds.has(state.currentTurnId)){
     advanceTurnAsDealer();
   }
   render();
@@ -337,6 +366,16 @@ function advanceTurnAsDealer(){
 }
 document.getElementById('btnSkip').onclick=()=>advanceTurnAsDealer();
 
+function abortRound(){
+  if(!state.isHost) return;
+  state.channel.send({type:'broadcast',event:'msg',payload:{event:'round_abort',from:state.me.id}});
+  applyRoundAbort();
+}
+function applyRoundAbort(){
+  state.roundActive=false; state.currentTurnId=null;
+  flashBanner('裁判掉线，本局作废');
+}
+
 function applyResult(p){
   appendFeed(p);
   if(p.win){
@@ -366,6 +405,14 @@ function onMsg(p){
     case 'guess': onGuess(p); break;
     case 'result': applyResult(p); break;
     case 'turn': state.currentTurnId=p.nextTurnId; render(); break;
+    case 'round_abort': applyRoundAbort(); break;
+    case 'sync_state':
+      Object.entries(p.scores).forEach(([id,s])=>{ if(state.scores[id]===undefined) state.scores[id]=s; });
+      if(!state.roundActive&&p.roundActive&&p.dealerId){
+        state.round=p.round; state.roundActive=p.roundActive;
+        state.dealerId=p.dealerId; state.currentTurnId=p.currentTurnId; state.turnOrder=p.turnOrder||[];
+      }
+      render(); break;
   }
 }
 
@@ -378,7 +425,8 @@ function render(roundWon,winPayload){
   list.forEach(p=>{
     const isTurn = state.roundActive && p.id===state.currentTurnId;
     const isDealer = p.id===state.dealerId;
-    const div=document.createElement('div'); div.className='pl'+(isTurn?' turn':'');
+    const isOnline=p.id===state.me.id||state.presentIds.has(p.id);
+    const div=document.createElement('div'); div.className='pl'+(isTurn?' turn':'')+(isOnline?'':' offline');
     let tags='';
     if(isDealer) tags+='<span class="ptag dealer">裁判</span>';
     if(p.id===state.me.id) tags+='<span class="ptag you">你</span>';
@@ -435,6 +483,15 @@ document.getElementById('btnCopy').onclick=async()=>{
   try{ await navigator.clipboard.writeText(state.room); b.textContent='已复制 ✓'; }
   catch(e){ b.textContent='房间号: '+state.room; }
   setTimeout(()=>b.textContent='复制房间号',2000);
+};
+
+document.getElementById('btnLeave').onclick=()=>{
+  state.channel?.unsubscribe();
+  state.channel=null;
+  Object.assign(state,{room:'',roster:[],scores:{},round:0,dealerId:null,
+    currentTurnId:null,turnOrder:[],secret:'',roundActive:false,isHost:false,presentIds:new Set()});
+  document.getElementById('feed').innerHTML='';
+  show('s-lobby');
 };
 
 loadConfig();
