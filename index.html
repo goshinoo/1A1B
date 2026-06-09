@@ -126,6 +126,19 @@
     padding:8px 10px; outline:none; resize:vertical; min-height:64px; }
   .notes-text:focus{ border-color:rgba(200,240,74,0.4); }
   .notes-text::placeholder{ color:var(--muted); }
+  .notes-section{ margin-bottom:12px; }
+  .notes-title{ font-family:var(--mono); font-size:11px; color:var(--muted); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px; }
+  .pos-grid{ display:flex; flex-direction:column; gap:3px; }
+  .pos-row{ display:grid; grid-template-columns:24px repeat(10,1fr); gap:3px; align-items:center; }
+  .pos-label, .pos-head{ font-family:var(--mono); font-size:10px; color:var(--muted); text-align:center; }
+  .pcell{ display:flex; align-items:center; justify-content:center; padding:5px 0;
+    background:var(--surface2); border:1px solid var(--border); border-radius:4px;
+    cursor:pointer; user-select:none; font-family:var(--mono); font-size:11px;
+    transition:border-color .12s, background .12s, opacity .12s; }
+  .pcell:hover{ border-color:rgba(200,240,74,0.3); }
+  .pcell.s-1{ color:var(--danger); opacity:.55; }
+  .pcell.s-2{ color:var(--blue); background:var(--blue-dim); }
+  .pcell.s-3{ color:var(--accent); background:var(--accent-dim); }
 
   footer{ margin-top:1.5rem; text-align:center; font-size:11px; font-family:var(--mono); color:var(--muted); }
 </style>
@@ -205,7 +218,14 @@
     <div class="notes-wrap" id="notesWrap" style="display:none;">
       <button class="ghost" id="btnNotesToggle" style="width:100%;font-size:12px;padding:8px 12px;">📝 打开草稿</button>
       <div class="notes" id="notes" style="display:none;">
-        <div class="notes-grid" id="notesGrid"></div>
+        <div class="notes-section">
+          <div class="notes-title">数字</div>
+          <div class="notes-grid" id="notesGrid"></div>
+        </div>
+        <div class="notes-section">
+          <div class="notes-title">位置</div>
+          <div class="pos-grid" id="posGrid"></div>
+        </div>
         <textarea id="notesText" class="notes-text" placeholder="自由记录…（仅自己可见）" rows="3"></textarea>
         <div class="notes-bottom">
           <span class="notes-legend">? 未知 · <span style="color:var(--danger)">✗ 排除</span> · <span style="color:var(--blue)">● 可能</span> · <span style="color:var(--accent)">✓ 确定</span></span>
@@ -251,6 +271,7 @@ const state = {
   secret:'',          // only on dealer client (or local in solo)
   roundActive:false,
   notes:{},           // digit 0-9 -> 0 unknown / 1 excluded / 2 maybe / 3 confirmed
+  posNotes:{},        // key "p-d" (p=0..3, d=0..9) -> same 0/1/2/3 cycle
   singlePlayer:false, // solo mode: no channel, evaluate locally
 };
 
@@ -581,7 +602,7 @@ document.getElementById('btnCopy').onclick=async()=>{
 function leaveRoom(){
   if(state.channel){ state.supa.removeChannel(state.channel); state.channel=null; }
   Object.assign(state,{room:'',roster:[],scores:{},round:0,dealerId:null,
-    currentTurnId:null,turnOrder:[],secret:'',roundActive:false,isHost:false,presentIds:new Set(),notes:{},singlePlayer:false});
+    currentTurnId:null,turnOrder:[],secret:'',roundActive:false,isHost:false,presentIds:new Set(),notes:{},posNotes:{},singlePlayer:false});
   clearNotes();
 }
 document.getElementById('btnLeave').onclick=()=>{
@@ -608,9 +629,33 @@ document.getElementById('btnNotesToggle').onclick=()=>{
   n.style.display=open?'none':'block';
   document.getElementById('btnNotesToggle').textContent=open?'📝 打开草稿':'📕 收起草稿';
 };
-function clearNotes(){ state.notes={}; document.getElementById('notesText').value=''; renderNotes(); }
+function renderPosNotes(){
+  const grid=document.getElementById('posGrid'); grid.innerHTML='';
+  const head=document.createElement('div'); head.className='pos-row';
+  head.innerHTML='<div class="pos-label"></div>'+
+    Array.from({length:10},(_,d)=>`<div class="pos-head">${d}</div>`).join('');
+  grid.appendChild(head);
+  for(let p=0;p<4;p++){
+    const row=document.createElement('div'); row.className='pos-row';
+    row.innerHTML=`<div class="pos-label">${p+1}</div>`;
+    for(let d=0;d<10;d++){
+      const k=p+'-'+d, s=state.posNotes[k]||0;
+      const cell=document.createElement('div');
+      cell.className='pcell s-'+s;
+      cell.textContent=NOTE_SYM[s];
+      cell.onclick=()=>{ state.posNotes[k]=((state.posNotes[k]||0)+1)%4; renderPosNotes(); };
+      row.appendChild(cell);
+    }
+    grid.appendChild(row);
+  }
+}
+function clearNotes(){
+  state.notes={}; state.posNotes={};
+  document.getElementById('notesText').value='';
+  renderNotes(); renderPosNotes();
+}
 document.getElementById('btnNotesReset').onclick=clearNotes;
-renderNotes();
+renderNotes(); renderPosNotes();
 
 loadConfig();
 </script>
