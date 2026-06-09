@@ -189,7 +189,7 @@
     <div class="roomhdr">
       <span class="code"><span id="roomPrefix">房间</span> <b id="roomCode">----</b></span>
       <div style="display:flex;gap:8px;">
-        <button class="ghost" id="btnCopy" style="padding:8px 14px;font-size:12px;">复制房间号</button>
+        <button class="ghost" id="btnCopy" style="padding:8px 14px;font-size:12px;">邀请链接</button>
         <button class="ghost" id="btnLeave" style="padding:8px 14px;font-size:12px;border-color:rgba(240,74,74,0.4);color:var(--danger);">离开</button>
       </div>
     </div>
@@ -592,11 +592,12 @@ function render(roundWon,winPayload){
 function flashBanner(msg){ const b=document.getElementById('banner'); b.className='banner'; b.textContent=msg; setTimeout(()=>render(),1800); }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+function inviteUrl(){ return location.origin+location.pathname+'?room='+state.room; }
 document.getElementById('btnCopy').onclick=async()=>{
   const b=document.getElementById('btnCopy');
-  try{ await navigator.clipboard.writeText(state.room); b.textContent='已复制 ✓'; }
-  catch(e){ b.textContent='房间号: '+state.room; }
-  setTimeout(()=>b.textContent='复制房间号',2000);
+  try{ await navigator.clipboard.writeText(inviteUrl()); b.textContent='已复制 ✓'; }
+  catch(e){ b.textContent='复制失败'; }
+  setTimeout(()=>b.textContent='邀请链接',2000);
 };
 
 function leaveRoom(){
@@ -658,6 +659,14 @@ document.getElementById('btnNotesReset').onclick=clearNotes;
 renderNotes(); renderPosNotes();
 
 loadConfig();
+
+// pick up ?room=XXXX from URL and prefill the join field
+(()=>{ const r=(new URLSearchParams(location.search).get('room')||'').toUpperCase();
+  if(/^[A-Z0-9]{4}$/.test(r)){
+    document.getElementById('joinCode').value=r;
+    if(document.getElementById('s-lobby').classList.contains('active')) document.getElementById('nick').focus();
+  }
+})();
 </script>
 </body>
 </html>
