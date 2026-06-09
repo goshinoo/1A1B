@@ -121,6 +121,11 @@
   .ncell.s-3{ color:var(--accent); border-color:rgba(200,240,74,0.55); background:var(--accent-dim); }
   .notes-bottom{ display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:10px; flex-wrap:wrap; }
   .notes-legend{ font-size:11px; color:var(--muted); font-family:var(--mono); }
+  .notes-text{ width:100%; margin-top:10px; background:var(--surface2); border:1px solid var(--border);
+    border-radius:6px; color:var(--text); font-family:var(--mono); font-size:13px; line-height:1.6;
+    padding:8px 10px; outline:none; resize:vertical; min-height:64px; }
+  .notes-text:focus{ border-color:rgba(200,240,74,0.4); }
+  .notes-text::placeholder{ color:var(--muted); }
 
   footer{ margin-top:1.5rem; text-align:center; font-size:11px; font-family:var(--mono); color:var(--muted); }
 </style>
@@ -201,6 +206,7 @@
       <button class="ghost" id="btnNotesToggle" style="width:100%;font-size:12px;padding:8px 12px;">📝 打开草稿</button>
       <div class="notes" id="notes" style="display:none;">
         <div class="notes-grid" id="notesGrid"></div>
+        <textarea id="notesText" class="notes-text" placeholder="自由记录…（仅自己可见）" rows="3"></textarea>
         <div class="notes-bottom">
           <span class="notes-legend">? 未知 · <span style="color:var(--danger)">✗ 排除</span> · <span style="color:var(--blue)">● 可能</span> · <span style="color:var(--accent)">✓ 确定</span></span>
           <button class="ghost" id="btnNotesReset" style="padding:4px 10px;font-size:11px;">清空</button>
@@ -281,7 +287,7 @@ function startSolo(){
   if(!state.me.name) state.me.name=document.getElementById('nick').value.trim()||'我';
   state.singlePlayer=true; state.isHost=false; state.room='';
   state.secret=genSecret(); state.roundActive=true;
-  state.notes={}; renderNotes();
+  clearNotes();
   document.getElementById('roomPrefix').textContent='单人挑战';
   document.getElementById('roomCode').textContent='';
   document.getElementById('feed').innerHTML='';
@@ -371,7 +377,7 @@ function applyNewRound(p){
   p.players.forEach(pl=>{ if(state.scores[pl.id]===undefined) state.scores[pl.id]=0; });
   document.getElementById('feed').innerHTML='';
   if(state.dealerId===state.me.id){ state.secret=genSecret(); }
-  state.notes={}; renderNotes();
+  clearNotes();
   render();
 }
 function genSecret(){ const d=[0,1,2,3,4,5,6,7,8,9]; for(let i=d.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]];} return d.slice(0,4).join(''); }
@@ -576,7 +582,7 @@ function leaveRoom(){
   if(state.channel){ state.supa.removeChannel(state.channel); state.channel=null; }
   Object.assign(state,{room:'',roster:[],scores:{},round:0,dealerId:null,
     currentTurnId:null,turnOrder:[],secret:'',roundActive:false,isHost:false,presentIds:new Set(),notes:{},singlePlayer:false});
-  renderNotes();
+  clearNotes();
 }
 document.getElementById('btnLeave').onclick=()=>{
   leaveRoom();
@@ -602,7 +608,8 @@ document.getElementById('btnNotesToggle').onclick=()=>{
   n.style.display=open?'none':'block';
   document.getElementById('btnNotesToggle').textContent=open?'📝 打开草稿':'📕 收起草稿';
 };
-document.getElementById('btnNotesReset').onclick=()=>{ state.notes={}; renderNotes(); };
+function clearNotes(){ state.notes={}; document.getElementById('notesText').value=''; renderNotes(); }
+document.getElementById('btnNotesReset').onclick=clearNotes;
 renderNotes();
 
 loadConfig();
