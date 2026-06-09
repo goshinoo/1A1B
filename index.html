@@ -152,6 +152,7 @@
       <label>你的昵称</label>
       <input class="field" id="nick" placeholder="输入昵称" maxlength="12" autocomplete="off">
       <button class="full" id="btnCreate">创建房间</button>
+      <button class="ghost full" id="btnSolo" style="margin-top:8px;">单人挑战（不联网）</button>
       <div style="display:flex; align-items:center; gap:10px; margin:16px 0; color:var(--muted); font-family:var(--mono); font-size:12px;">
         <div style="flex:1;height:1px;background:var(--border)"></div>或<div style="flex:1;height:1px;background:var(--border)"></div>
       </div>
@@ -168,7 +169,7 @@
   <section class="screen" id="s-room">
     <h1>1A1B</h1>
     <div class="roomhdr">
-      <span class="code">房间 <b id="roomCode">----</b></span>
+      <span class="code"><span id="roomPrefix">房间</span> <b id="roomCode">----</b></span>
       <div style="display:flex;gap:8px;">
         <button class="ghost" id="btnCopy" style="padding:8px 14px;font-size:12px;">复制房间号</button>
         <button class="ghost" id="btnLeave" style="padding:8px 14px;font-size:12px;border-color:rgba(240,74,74,0.4);color:var(--danger);">离开</button>
@@ -241,9 +242,10 @@ const state = {
   dealerId:null,
   turnOrder:[],       // ids of guessers this round
   currentTurnId:null,
-  secret:'',          // only on dealer client
+  secret:'',          // only on dealer client (or local in solo)
   roundActive:false,
   notes:{},           // digit 0-9 -> 0 unknown / 1 excluded / 2 maybe / 3 confirmed
+  singlePlayer:false, // solo mode: no channel, evaluate locally
 };
 
 function show(id){ document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
@@ -274,9 +276,24 @@ document.getElementById('btnJoin').onclick=()=>{
   if(code.length!==4){ err.textContent='房间号是 4 位'; return; }
   state.me.name=name; state.isHost=false; state.room=code; enterRoom();
 };
+document.getElementById('btnSolo').onclick=startSolo;
+function startSolo(){
+  if(!state.me.name) state.me.name=document.getElementById('nick').value.trim()||'我';
+  state.singlePlayer=true; state.isHost=false; state.room='';
+  state.secret=genSecret(); state.roundActive=true;
+  state.notes={}; renderNotes();
+  document.getElementById('roomPrefix').textContent='单人挑战';
+  document.getElementById('roomCode').textContent='';
+  document.getElementById('feed').innerHTML='';
+  document.getElementById('playErr').textContent='';
+  show('s-room');
+  render();
+}
 
 /* ---------- channel ---------- */
 function enterRoom(){
+  state.singlePlayer=false;
+  document.getElementById('roomPrefix').textContent='房间';
   document.getElementById('roomCode').textContent=state.room;
   if(state.scores[state.me.id]===undefined) state.scores[state.me.id]=0;
   show('s-room');
@@ -329,7 +346,7 @@ function onPresence(){
 }
 
 /* ---------- round control (host) ---------- */
-document.getElementById('btnStart').onclick=startNextRound;
+document.getElementById('btnStart').onclick=()=>{ if(state.singlePlayer) startSolo(); else startNextRound(); };
 function startNextRound(){
   if(!state.isHost) return;
   const present=state.roster.filter(p=>state.presentIds.has(p.id));
@@ -363,8 +380,20 @@ function genSecret(){ const d=[0,1,2,3,4,5,6,7,8,9]; for(let i=d.length-1;i>0;i-
 document.getElementById('btnGuess').onclick=submitGuess;
 document.getElementById('guessInput').addEventListener('keydown',e=>{ if(e.key==='Enter') submitGuess(); });
 function submitGuess(){
-  if(!state.roundActive || state.currentTurnId!==state.me.id || state.dealerId===state.me.id) return;
   const input=document.getElementById('guessInput'), err=document.getElementById('playErr'), v=input.value.trim();
+  if(state.singlePlayer){
+    if(!state.roundActive) return;
+    if(!/^\d{4}$/.test(v)){ err.textContent='请输入 4 位数字'; return; }
+    if(new Set(v).size!==4){ err.textContent='不能有重复数字'; return; }
+    err.textContent=''; input.value='';
+    const {a,b}=evaluate(state.secret,v);
+    const win=(a===4);
+    const payload={guesserId:state.me.id,guesserName:state.me.name,number:v,a,b,win};
+    appendFeed(payload);
+    if(win){ state.roundActive=false; render(true,payload); } else { render(); }
+    return;
+  }
+  if(!state.roundActive || state.currentTurnId!==state.me.id || state.dealerId===state.me.id) return;
   if(!/^\d{4}$/.test(v)){ err.textContent='请输入 4 位数字'; return; }
   if(new Set(v).size!==4){ err.textContent='不能有重复数字'; return; }
   err.textContent=''; input.value='';
@@ -455,25 +484,44 @@ function onMsg(p){
 /* ---------- rendering ---------- */
 function nameOf(id){ const p=state.roster.find(x=>x.id===id); return p?p.name:'?'; }
 function render(roundWon,winPayload){
-  // scoreboard
-  const sb=document.getElementById('scoreboard'); sb.innerHTML='';
-  const list = state.roster.length? state.roster : [{id:state.me.id,name:state.me.name}];
-  list.forEach(p=>{
-    const isTurn = state.roundActive && p.id===state.currentTurnId;
-    const isDealer = p.id===state.dealerId;
-    const isOnline=p.id===state.me.id||state.presentIds.has(p.id);
-    const div=document.createElement('div'); div.className='pl'+(isTurn?' turn':'')+(isOnline?'':' offline');
-    let tags='';
-    if(isDealer) tags+='<span class="ptag dealer">裁判</span>';
-    if(p.id===state.me.id) tags+='<span class="ptag you">你</span>';
-    div.innerHTML=`<span class="pdot"></span><span class="pname">${escapeHtml(p.name)}</span>${tags}
-      <span class="pscore">${state.scores[p.id]||0}</span>`;
-    sb.appendChild(div);
-  });
+  const solo=state.singlePlayer;
+
+  // scoreboard / copy button hidden in solo
+  const sb=document.getElementById('scoreboard');
+  sb.style.display = solo?'none':'flex';
+  document.getElementById('btnCopy').style.display = solo?'none':'';
+  if(!solo){
+    sb.innerHTML='';
+    const list = state.roster.length? state.roster : [{id:state.me.id,name:state.me.name}];
+    list.forEach(p=>{
+      const isTurn = state.roundActive && p.id===state.currentTurnId;
+      const isDealer = p.id===state.dealerId;
+      const isOnline=p.id===state.me.id||state.presentIds.has(p.id);
+      const div=document.createElement('div'); div.className='pl'+(isTurn?' turn':'')+(isOnline?'':' offline');
+      let tags='';
+      if(isDealer) tags+='<span class="ptag dealer">裁判</span>';
+      if(p.id===state.me.id) tags+='<span class="ptag you">你</span>';
+      div.innerHTML=`<span class="pdot"></span><span class="pname">${escapeHtml(p.name)}</span>${tags}
+        <span class="pscore">${state.scores[p.id]||0}</span>`;
+      sb.appendChild(div);
+    });
+  }
 
   // banner
   const banner=document.getElementById('banner');
-  if(roundWon && winPayload){
+  if(solo){
+    const cnt=document.getElementById('feed').children.length;
+    if(roundWon && winPayload){
+      banner.className='banner win';
+      banner.textContent=`🎉 ${cnt} 次猜中！答案就是 ${winPayload.number}`;
+    } else if(state.roundActive){
+      banner.className='banner';
+      banner.textContent = cnt===0 ? '猜一个 4 位不重复数字' : `已猜 ${cnt} 次，继续`;
+    } else {
+      banner.className='banner';
+      banner.textContent='点「再来一局」开始';
+    }
+  } else if(roundWon && winPayload){
     banner.className='banner win';
     banner.textContent=`🎉 ${winPayload.guesserName} 猜中 ${winPayload.number}！答案就是它`;
   } else if(state.roundActive){
@@ -487,30 +535,32 @@ function render(roundWon,winPayload){
     banner.textContent = state.round===0 ? (present<2?`房间里 ${present} 人，至少 2 人开始`:'准备就绪，等房主开始') : '本局结束，等房主开下一局';
   }
 
-  // dealer secret box
+  // dealer secret box (multiplayer only)
   const db=document.getElementById('dealerbox');
-  if(state.roundActive && state.dealerId===state.me.id){ db.style.display='block'; document.getElementById('dealerNum').textContent=state.secret.split('').join(' '); }
+  if(!solo && state.roundActive && state.dealerId===state.me.id){ db.style.display='block'; document.getElementById('dealerNum').textContent=state.secret.split('').join(' '); }
   else db.style.display='none';
 
   // feed visibility
-  document.getElementById('feedTitle').style.display = (state.round>0)?'block':'none';
+  document.getElementById('feedTitle').style.display = (solo||state.round>0)?'block':'none';
 
   // input
   const pw=document.getElementById('playWrap'), input=document.getElementById('guessInput'), btn=document.getElementById('btnGuess');
-  const iAmGuesser = state.roundActive && state.dealerId!==state.me.id;
+  const iAmGuesser = state.roundActive && (solo || state.dealerId!==state.me.id);
   pw.style.display = iAmGuesser? 'block':'none';
   document.getElementById('notesWrap').style.display = iAmGuesser? 'block':'none';
-  const myTurn = iAmGuesser && state.currentTurnId===state.me.id;
+  const myTurn = iAmGuesser && (solo || state.currentTurnId===state.me.id);
   input.disabled=!myTurn; btn.disabled=!myTurn;
   if(myTurn) input.focus();
 
-  // host controls
+  // start / restart controls
   const hc=document.getElementById('hostControls');
-  if(state.isHost && !state.roundActive){ hc.style.display='flex'; document.getElementById('btnStart').textContent = state.round===0?'开始游戏':'开下一局'; }
-  else hc.style.display='none';
+  if(!state.roundActive && (solo || state.isHost)){
+    hc.style.display='flex';
+    document.getElementById('btnStart').textContent = solo ? '再来一局' : (state.round===0?'开始游戏':'开下一局');
+  } else hc.style.display='none';
 
-  // dealer skip control
-  document.getElementById('dealerControls').style.display = (state.roundActive && state.dealerId===state.me.id)?'flex':'none';
+  // dealer skip control (multiplayer only)
+  document.getElementById('dealerControls').style.display = (!solo && state.roundActive && state.dealerId===state.me.id)?'flex':'none';
 }
 function flashBanner(msg){ const b=document.getElementById('banner'); b.className='banner'; b.textContent=msg; setTimeout(()=>render(),1800); }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -525,7 +575,7 @@ document.getElementById('btnCopy').onclick=async()=>{
 function leaveRoom(){
   if(state.channel){ state.supa.removeChannel(state.channel); state.channel=null; }
   Object.assign(state,{room:'',roster:[],scores:{},round:0,dealerId:null,
-    currentTurnId:null,turnOrder:[],secret:'',roundActive:false,isHost:false,presentIds:new Set(),notes:{}});
+    currentTurnId:null,turnOrder:[],secret:'',roundActive:false,isHost:false,presentIds:new Set(),notes:{},singlePlayer:false});
   renderNotes();
 }
 document.getElementById('btnLeave').onclick=()=>{
