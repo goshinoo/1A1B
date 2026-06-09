@@ -105,6 +105,23 @@
   .host-controls{ display:flex; gap:10px; margin-top:1rem; }
   .host-controls button{ flex:1; }
 
+  /* notes */
+  .notes-wrap{ margin-top:12px; }
+  .notes{ margin-top:10px; padding:12px; background:var(--surface); border:1px solid var(--border); border-radius:8px; }
+  .notes-grid{ display:grid; grid-template-columns:repeat(5,1fr); gap:6px; }
+  .ncell{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+    padding:10px 0; background:var(--surface2); border:1px solid var(--border); border-radius:6px;
+    cursor:pointer; user-select:none; transition:border-color .12s, background .12s, opacity .12s;
+    font-family:var(--mono); }
+  .ncell:hover{ border-color:rgba(200,240,74,0.3); }
+  .ncell .nd{ font-size:18px; font-weight:700; }
+  .ncell .ns{ font-size:11px; opacity:.75; }
+  .ncell.s-1{ color:var(--danger); border-color:rgba(240,74,74,0.35); opacity:.55; }
+  .ncell.s-2{ color:var(--blue); border-color:rgba(74,200,240,0.45); background:var(--blue-dim); }
+  .ncell.s-3{ color:var(--accent); border-color:rgba(200,240,74,0.55); background:var(--accent-dim); }
+  .notes-bottom{ display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:10px; flex-wrap:wrap; }
+  .notes-legend{ font-size:11px; color:var(--muted); font-family:var(--mono); }
+
   footer{ margin-top:1.5rem; text-align:center; font-size:11px; font-family:var(--mono); color:var(--muted); }
 </style>
 </head>
@@ -179,6 +196,17 @@
       <div class="err" id="playErr"></div>
     </div>
 
+    <div class="notes-wrap" id="notesWrap" style="display:none;">
+      <button class="ghost" id="btnNotesToggle" style="width:100%;font-size:12px;padding:8px 12px;">📝 打开草稿</button>
+      <div class="notes" id="notes" style="display:none;">
+        <div class="notes-grid" id="notesGrid"></div>
+        <div class="notes-bottom">
+          <span class="notes-legend">? 未知 · <span style="color:var(--danger)">✗ 排除</span> · <span style="color:var(--blue)">● 可能</span> · <span style="color:var(--accent)">✓ 确定</span></span>
+          <button class="ghost" id="btnNotesReset" style="padding:4px 10px;font-size:11px;">清空</button>
+        </div>
+      </div>
+    </div>
+
     <div class="host-controls" id="hostControls" style="display:none;">
       <button id="btnStart">开始游戏</button>
     </div>
@@ -215,6 +243,7 @@ const state = {
   currentTurnId:null,
   secret:'',          // only on dealer client
   roundActive:false,
+  notes:{},           // digit 0-9 -> 0 unknown / 1 excluded / 2 maybe / 3 confirmed
 };
 
 function show(id){ document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
@@ -325,6 +354,7 @@ function applyNewRound(p){
   p.players.forEach(pl=>{ if(state.scores[pl.id]===undefined) state.scores[pl.id]=0; });
   document.getElementById('feed').innerHTML='';
   if(state.dealerId===state.me.id){ state.secret=genSecret(); }
+  state.notes={}; renderNotes();
   render();
 }
 function genSecret(){ const d=[0,1,2,3,4,5,6,7,8,9]; for(let i=d.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]];} return d.slice(0,4).join(''); }
@@ -469,6 +499,7 @@ function render(roundWon,winPayload){
   const pw=document.getElementById('playWrap'), input=document.getElementById('guessInput'), btn=document.getElementById('btnGuess');
   const iAmGuesser = state.roundActive && state.dealerId!==state.me.id;
   pw.style.display = iAmGuesser? 'block':'none';
+  document.getElementById('notesWrap').style.display = iAmGuesser? 'block':'none';
   const myTurn = iAmGuesser && state.currentTurnId===state.me.id;
   input.disabled=!myTurn; btn.disabled=!myTurn;
   if(myTurn) input.focus();
@@ -494,7 +525,8 @@ document.getElementById('btnCopy').onclick=async()=>{
 function leaveRoom(){
   if(state.channel){ state.supa.removeChannel(state.channel); state.channel=null; }
   Object.assign(state,{room:'',roster:[],scores:{},round:0,dealerId:null,
-    currentTurnId:null,turnOrder:[],secret:'',roundActive:false,isHost:false,presentIds:new Set()});
+    currentTurnId:null,turnOrder:[],secret:'',roundActive:false,isHost:false,presentIds:new Set(),notes:{}});
+  renderNotes();
 }
 document.getElementById('btnLeave').onclick=()=>{
   leaveRoom();
@@ -502,6 +534,26 @@ document.getElementById('btnLeave').onclick=()=>{
   show('s-lobby');
 };
 window.addEventListener('beforeunload',()=>{ if(state.channel) state.supa.removeChannel(state.channel); });
+
+const NOTE_SYM=['?','✗','●','✓'];
+function renderNotes(){
+  const grid=document.getElementById('notesGrid'); grid.innerHTML='';
+  for(let d=0;d<10;d++){
+    const s=state.notes[d]||0;
+    const cell=document.createElement('div');
+    cell.className='ncell s-'+s;
+    cell.innerHTML=`<span class="nd">${d}</span><span class="ns">${NOTE_SYM[s]}</span>`;
+    cell.onclick=()=>{ state.notes[d]=((state.notes[d]||0)+1)%4; renderNotes(); };
+    grid.appendChild(cell);
+  }
+}
+document.getElementById('btnNotesToggle').onclick=()=>{
+  const n=document.getElementById('notes'); const open=n.style.display!=='none';
+  n.style.display=open?'none':'block';
+  document.getElementById('btnNotesToggle').textContent=open?'📝 打开草稿':'📕 收起草稿';
+};
+document.getElementById('btnNotesReset').onclick=()=>{ state.notes={}; renderNotes(); };
+renderNotes();
 
 loadConfig();
 </script>
