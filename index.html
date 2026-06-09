@@ -277,24 +277,24 @@ function onPresence(){
     state.isHost=true;
     state.channel.track({id:state.me.id,name:state.me.name,isHost:true});
   }
-  // sync scores/round state to newcomers
+  // abort round if dealer left (host handles) — must run before sync_state
+  if(state.roundActive&&state.isHost&&state.dealerId&&!state.presentIds.has(state.dealerId)){
+    abortRound('裁判掉线，本局作废');
+  }
+  // abort round if all guessers offline
+  else if(state.roundActive&&state.isHost&&state.turnOrder.length>0&&!state.turnOrder.some(id=>state.presentIds.has(id))){
+    abortRound('所有猜题者已离线，本局作废');
+  }
+  // dealer auto-skip if current turn player left mid-round
+  else if(state.roundActive&&state.dealerId===state.me.id&&state.currentTurnId&&!state.presentIds.has(state.currentTurnId)){
+    advanceTurnAsDealer();
+  }
+  // sync scores/round state to newcomers (after any abort, so state is current)
   if(state.isHost&&newcomers.length>0){
     state.channel.send({type:'broadcast',event:'msg',payload:{
       event:'sync_state',from:state.me.id,scores:{...state.scores},round:state.round,
       roundActive:state.roundActive,dealerId:state.dealerId,currentTurnId:state.currentTurnId,turnOrder:state.turnOrder.slice()
     }});
-  }
-  // abort round if dealer left (host handles)
-  if(state.roundActive&&state.isHost&&state.dealerId&&!state.presentIds.has(state.dealerId)){
-    abortRound('裁判掉线，本局作废'); return;
-  }
-  // abort round if all guessers offline
-  if(state.roundActive&&state.isHost&&state.turnOrder.length>0&&!state.turnOrder.some(id=>state.presentIds.has(id))){
-    abortRound('所有猜题者已离线，本局作废'); return;
-  }
-  // dealer auto-skip if current turn player left mid-round
-  if(state.roundActive&&state.dealerId===state.me.id&&state.currentTurnId&&!state.presentIds.has(state.currentTurnId)){
-    advanceTurnAsDealer();
   }
   render();
 }
@@ -308,7 +308,8 @@ function startNextRound(){
   state.round++;
   // order: rotate so host is first, then rotate dealer by round
   let order=present.slice();
-  const hi=order.findIndex(p=>p.id===state.me.id);
+  let hi=order.findIndex(p=>p.id===state.me.id);
+  if(hi<0) hi=0;
   order=order.slice(hi).concat(order.slice(0,hi));
   const dealerId=order[(state.round-1)%order.length].id;
   const turnOrder=order.filter(p=>p.id!==dealerId).map(p=>p.id);
@@ -345,6 +346,7 @@ function evaluate(secret,guess){ let a=0,b=0; for(let i=0;i<4;i++){ if(guess[i]=
 function onGuess(p){
   if(state.dealerId!==state.me.id || !state.roundActive) return;
   if(p.from!==state.currentTurnId) return; // not their turn, ignore
+  if(typeof p.number!=='string'||!/^\d{4}$/.test(p.number)||new Set(p.number).size!==4) return; // reject malformed
   const {a,b}=evaluate(state.secret,p.number);
   const win=(a===4);
   const idx=state.turnOrder.indexOf(p.from);
@@ -396,8 +398,8 @@ function appendFeed(p){
   const row=document.createElement('div');
   row.className='frow'+(p.guesserId===state.me.id?' mine':'')+(p.win?' winrow':'');
   row.innerHTML=`<span class="who">${escapeHtml(p.guesserName)}</span>
-    <span class="num">${p.number}</span>
-    <span class="res"><span class="a">${p.a}A</span> <span class="b">${p.b}B</span></span>`;
+    <span class="num">${escapeHtml(p.number)}</span>
+    <span class="res"><span class="a">${escapeHtml(p.a)}A</span> <span class="b">${escapeHtml(p.b)}B</span></span>`;
   feed.appendChild(row); feed.scrollTop=feed.scrollHeight;
 }
 
@@ -480,7 +482,7 @@ function render(roundWon,winPayload){
   document.getElementById('dealerControls').style.display = (state.roundActive && state.dealerId===state.me.id)?'flex':'none';
 }
 function flashBanner(msg){ const b=document.getElementById('banner'); b.className='banner'; b.textContent=msg; setTimeout(()=>render(),1800); }
-function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 document.getElementById('btnCopy').onclick=async()=>{
   const b=document.getElementById('btnCopy');
@@ -489,14 +491,17 @@ document.getElementById('btnCopy').onclick=async()=>{
   setTimeout(()=>b.textContent='复制房间号',2000);
 };
 
-document.getElementById('btnLeave').onclick=()=>{
-  state.channel?.unsubscribe();
-  state.channel=null;
+function leaveRoom(){
+  if(state.channel){ state.supa.removeChannel(state.channel); state.channel=null; }
   Object.assign(state,{room:'',roster:[],scores:{},round:0,dealerId:null,
     currentTurnId:null,turnOrder:[],secret:'',roundActive:false,isHost:false,presentIds:new Set()});
+}
+document.getElementById('btnLeave').onclick=()=>{
+  leaveRoom();
   document.getElementById('feed').innerHTML='';
   show('s-lobby');
 };
+window.addEventListener('beforeunload',()=>{ if(state.channel) state.supa.removeChannel(state.channel); });
 
 loadConfig();
 </script>
