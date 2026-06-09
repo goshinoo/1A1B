@@ -249,9 +249,8 @@ document.getElementById('btnJoin').onclick=()=>{
 /* ---------- channel ---------- */
 function enterRoom(){
   document.getElementById('roomCode').textContent=state.room;
-  state.scores[state.me.id]=0;
+  if(state.scores[state.me.id]===undefined) state.scores[state.me.id]=0;
   show('s-room');
-  document.getElementById('banner').textContent='连接中…';
   state.channel=state.supa.channel('a1b-'+state.room,{config:{broadcast:{self:true},presence:{key:state.me.id}}});
   state.channel
     .on('broadcast',{event:'msg'},({payload})=>onMsg(payload))
@@ -261,6 +260,7 @@ function enterRoom(){
       else if(s==='CHANNEL_ERROR'||s==='TIMED_OUT'){ document.getElementById('banner').textContent='连接失败，请刷新重试'; }
     });
   render();
+  document.getElementById('banner').textContent='连接中…';
 }
 function onPresence(){
   const st=state.channel.presenceState();
@@ -286,7 +286,11 @@ function onPresence(){
   }
   // abort round if dealer left (host handles)
   if(state.roundActive&&state.isHost&&state.dealerId&&!state.presentIds.has(state.dealerId)){
-    abortRound(); return;
+    abortRound('裁判掉线，本局作废'); return;
+  }
+  // abort round if all guessers offline
+  if(state.roundActive&&state.isHost&&state.turnOrder.length>0&&!state.turnOrder.some(id=>state.presentIds.has(id))){
+    abortRound('所有猜题者已离线，本局作废'); return;
   }
   // dealer auto-skip if current turn player left mid-round
   if(state.roundActive&&state.dealerId===state.me.id&&state.currentTurnId&&!state.presentIds.has(state.currentTurnId)){
@@ -366,14 +370,14 @@ function advanceTurnAsDealer(){
 }
 document.getElementById('btnSkip').onclick=()=>advanceTurnAsDealer();
 
-function abortRound(){
+function abortRound(reason){
   if(!state.isHost) return;
-  state.channel.send({type:'broadcast',event:'msg',payload:{event:'round_abort',from:state.me.id}});
-  applyRoundAbort();
+  state.channel.send({type:'broadcast',event:'msg',payload:{event:'round_abort',from:state.me.id,reason}});
+  applyRoundAbort(reason);
 }
-function applyRoundAbort(){
+function applyRoundAbort(reason){
   state.roundActive=false; state.currentTurnId=null;
-  flashBanner('裁判掉线，本局作废');
+  flashBanner(reason||'本局作废');
 }
 
 function applyResult(p){
@@ -405,9 +409,9 @@ function onMsg(p){
     case 'guess': onGuess(p); break;
     case 'result': applyResult(p); break;
     case 'turn': state.currentTurnId=p.nextTurnId; render(); break;
-    case 'round_abort': applyRoundAbort(); break;
+    case 'round_abort': applyRoundAbort(p.reason); break;
     case 'sync_state':
-      Object.entries(p.scores).forEach(([id,s])=>{ if(state.scores[id]===undefined) state.scores[id]=s; });
+      Object.entries(p.scores).forEach(([id,s])=>{ state.scores[id]=Math.max(state.scores[id]||0,s); });
       if(!state.roundActive&&p.roundActive&&p.dealerId){
         state.round=p.round; state.roundActive=p.roundActive;
         state.dealerId=p.dealerId; state.currentTurnId=p.currentTurnId; state.turnOrder=p.turnOrder||[];
@@ -475,7 +479,7 @@ function render(roundWon,winPayload){
   // dealer skip control
   document.getElementById('dealerControls').style.display = (state.roundActive && state.dealerId===state.me.id)?'flex':'none';
 }
-function flashBanner(msg){ const b=document.getElementById('banner'); b.textContent=msg; setTimeout(()=>render(),1800); }
+function flashBanner(msg){ const b=document.getElementById('banner'); b.className='banner'; b.textContent=msg; setTimeout(()=>render(),1800); }
 function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 document.getElementById('btnCopy').onclick=async()=>{
