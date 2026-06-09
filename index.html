@@ -140,6 +140,21 @@
   .pcell.s-2{ color:var(--blue); background:var(--blue-dim); }
   .pcell.s-3{ color:var(--accent); background:var(--accent-dim); }
 
+  /* mode selector */
+  .modes{ border:none; padding:0; margin:14px 0 0; }
+  .modes .lbl{ font-size:12px; color:var(--muted); font-family:var(--mono); margin-bottom:6px; }
+  .modes label{ display:flex; align-items:center; gap:8px; padding:6px 0; cursor:pointer; font-size:13px; color:var(--text); }
+  .modes input[type=radio]{ accent-color:var(--accent); cursor:pointer; width:14px; height:14px; }
+  .modes input[type=number]{ width:52px; background:var(--surface2); border:1px solid var(--border); border-radius:4px;
+    color:var(--text); font-family:var(--mono); font-size:13px; padding:3px 6px; text-align:center; outline:none; }
+  .modes input[type=number]:focus{ border-color:rgba(200,240,74,0.5); }
+
+  /* mode line under room header */
+  .mode-line{ font-family:var(--mono); font-size:11px; color:var(--muted); margin-top:3px; }
+
+  /* winner tag */
+  .ptag.winner{ background:var(--accent); color:#0e0e12; font-weight:700; }
+
   footer{ margin-top:1.5rem; text-align:center; font-size:11px; font-family:var(--mono); color:var(--muted); }
 </style>
 </head>
@@ -169,7 +184,13 @@
     <div class="card">
       <label>你的昵称</label>
       <input class="field" id="nick" placeholder="输入昵称" maxlength="12" autocomplete="off">
-      <button class="full" id="btnCreate">创建房间</button>
+      <div class="modes">
+        <div class="lbl">创建房间模式</div>
+        <label><input type="radio" name="mode" value="endless" checked> 无限对局</label>
+        <label><input type="radio" name="mode" value="firstTo"> 先到 <input type="number" id="targetFirstTo" min="1" max="50" value="3"> 分获胜</label>
+        <label><input type="radio" name="mode" value="fixed"> 打满 <input type="number" id="targetFixed" min="1" max="50" value="5"> 局</label>
+      </div>
+      <button class="full" id="btnCreate" style="margin-top:10px;">创建房间</button>
       <button class="ghost full" id="btnSolo" style="margin-top:8px;">单人挑战（不联网）</button>
       <div style="display:flex; align-items:center; gap:10px; margin:16px 0; color:var(--muted); font-family:var(--mono); font-size:12px;">
         <div style="flex:1;height:1px;background:var(--border)"></div>或<div style="flex:1;height:1px;background:var(--border)"></div>
@@ -187,7 +208,10 @@
   <section class="screen" id="s-room">
     <h1>1A1B</h1>
     <div class="roomhdr">
-      <span class="code"><span id="roomPrefix">房间</span> <b id="roomCode">----</b></span>
+      <div>
+        <span class="code"><span id="roomPrefix">房间</span> <b id="roomCode">----</b></span>
+        <div class="mode-line" id="modeLine" style="display:none;"></div>
+      </div>
       <div style="display:flex;gap:8px;">
         <button class="ghost" id="btnCopy" style="padding:8px 14px;font-size:12px;">邀请链接</button>
         <button class="ghost" id="btnLeave" style="padding:8px 14px;font-size:12px;border-color:rgba(240,74,74,0.4);color:var(--danger);">离开</button>
@@ -273,6 +297,8 @@ const state = {
   notes:{},           // digit 0-9 -> 0 unknown / 1 excluded / 2 maybe / 3 confirmed
   posNotes:{},        // key "p-d" (p=0..3, d=0..9) -> same 0/1/2/3 cycle
   singlePlayer:false, // solo mode: no channel, evaluate locally
+  config:{mode:'endless',target:3}, // 'endless' | 'firstTo' | 'fixed'
+  gameEnded:false,    // multiplayer end-of-game flag
 };
 
 function show(id){ document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active')); document.getElementById(id).classList.add('active'); }
@@ -295,6 +321,11 @@ function randCode(){ const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s=''; for(l
 document.getElementById('btnCreate').onclick=()=>{
   const name=document.getElementById('nick').value.trim();
   if(!name){ document.getElementById('lobbyErr').textContent='先填个昵称'; return; }
+  const mode=document.querySelector('input[name="mode"]:checked').value;
+  let target=3;
+  if(mode==='firstTo') target=Math.max(1,Math.min(50,parseInt(document.getElementById('targetFirstTo').value,10)||3));
+  else if(mode==='fixed') target=Math.max(1,Math.min(50,parseInt(document.getElementById('targetFixed').value,10)||5));
+  state.config={mode,target}; state.gameEnded=false;
   state.me.name=name; state.isHost=true; state.room=randCode(); enterRoom();
 };
 document.getElementById('btnJoin').onclick=()=>{
@@ -366,7 +397,8 @@ function onPresence(){
   if(state.isHost&&newcomers.length>0){
     state.channel.send({type:'broadcast',event:'msg',payload:{
       event:'sync_state',from:state.me.id,scores:{...state.scores},round:state.round,
-      roundActive:state.roundActive,dealerId:state.dealerId,currentTurnId:state.currentTurnId,turnOrder:state.turnOrder.slice()
+      roundActive:state.roundActive,dealerId:state.dealerId,currentTurnId:state.currentTurnId,turnOrder:state.turnOrder.slice(),
+      config:state.config,gameEnded:state.gameEnded
     }});
   }
   render();
@@ -378,6 +410,9 @@ function startNextRound(){
   if(!state.isHost) return;
   const present=state.roster.filter(p=>state.presentIds.has(p.id));
   if(present.length<2){ flashBanner('至少需要 2 人才能开始'); return; }
+  // if game ended, reset before starting again
+  const resetScores = state.gameEnded;
+  if(resetScores){ state.gameEnded=false; state.round=0; state.scores={}; present.forEach(p=>state.scores[p.id]=0); }
   state.round++;
   // order: rotate so host is first, then rotate dealer by round
   let order=present.slice();
@@ -387,11 +422,14 @@ function startNextRound(){
   const dealerId=order[(state.round-1)%order.length].id;
   const turnOrder=order.filter(p=>p.id!==dealerId).map(p=>p.id);
   state.channel.send({type:'broadcast',event:'msg',payload:{
-    event:'new_round', from:state.me.id, round:state.round, dealerId, players:order, turnOrder
+    event:'new_round', from:state.me.id, round:state.round, dealerId, players:order, turnOrder,
+    config:state.config, resetScores
   }});
-  applyNewRound({round:state.round,dealerId,players:order,turnOrder});
+  applyNewRound({round:state.round,dealerId,players:order,turnOrder,config:state.config,resetScores});
 }
 function applyNewRound(p){
+  if(p.resetScores){ state.scores={}; state.gameEnded=false; }
+  if(p.config) state.config=p.config;
   state.round=p.round; state.dealerId=p.dealerId; state.turnOrder=p.turnOrder;
   state.currentTurnId=p.turnOrder[0]||null; state.roundActive=true; state.secret='';
   state.roster=p.players.slice();
@@ -474,6 +512,9 @@ function applyResult(p){
     state.roundActive=false; state.currentTurnId=null;
     state.scores[p.guesserId]=(state.scores[p.guesserId]||0)+1;
     if(p.secret) state.secret=p.secret;
+    // end-of-game check
+    if(state.config.mode==='firstTo' && state.scores[p.guesserId]>=state.config.target) state.gameEnded=true;
+    else if(state.config.mode==='fixed' && Object.values(state.scores).reduce((a,b)=>a+b,0)>=state.config.target) state.gameEnded=true;
     render(true,p);
   } else {
     state.currentTurnId=p.nextTurnId; render();
@@ -500,6 +541,8 @@ function onMsg(p){
     case 'round_abort': applyRoundAbort(p.reason); break;
     case 'sync_state':
       Object.entries(p.scores).forEach(([id,s])=>{ state.scores[id]=Math.max(state.scores[id]||0,s); });
+      if(p.config) state.config=p.config;
+      if(p.gameEnded!==undefined) state.gameEnded=p.gameEnded;
       if(!state.roundActive&&p.roundActive&&p.dealerId){
         state.round=p.round; state.roundActive=p.roundActive;
         state.dealerId=p.dealerId; state.currentTurnId=p.currentTurnId; state.turnOrder=p.turnOrder||[];
@@ -519,19 +562,35 @@ function render(roundWon,winPayload){
   document.getElementById('btnCopy').style.display = solo?'none':'';
   if(!solo){
     sb.innerHTML='';
-    const list = state.roster.length? state.roster : [{id:state.me.id,name:state.me.name}];
+    const baseList = state.roster.length? state.roster : [{id:state.me.id,name:state.me.name}];
+    const list = state.gameEnded ? [...baseList].sort((a,b)=>(state.scores[b.id]||0)-(state.scores[a.id]||0)) : baseList;
+    const maxScore = Math.max(0,...Object.values(state.scores));
+    const scoreSuffix = (state.config.mode==='firstTo'||state.config.mode==='fixed') ? '/'+state.config.target : '';
     list.forEach(p=>{
       const isTurn = state.roundActive && p.id===state.currentTurnId;
       const isDealer = p.id===state.dealerId;
       const isOnline=p.id===state.me.id||state.presentIds.has(p.id);
+      const isWinner = state.gameEnded && (state.scores[p.id]||0)===maxScore && maxScore>0;
       const div=document.createElement('div'); div.className='pl'+(isTurn?' turn':'')+(isOnline?'':' offline');
       let tags='';
+      if(isWinner) tags+='<span class="ptag winner">第一</span>';
       if(isDealer) tags+='<span class="ptag dealer">裁判</span>';
       if(p.id===state.me.id) tags+='<span class="ptag you">你</span>';
       div.innerHTML=`<span class="pdot"></span><span class="pname">${escapeHtml(p.name)}</span>${tags}
-        <span class="pscore">${state.scores[p.id]||0}</span>`;
+        <span class="pscore">${state.scores[p.id]||0}${scoreSuffix}</span>`;
       sb.appendChild(div);
     });
+  }
+
+  // mode line under header
+  const modeLine=document.getElementById('modeLine');
+  if(solo || state.config.mode==='endless'){ modeLine.style.display='none'; }
+  else {
+    modeLine.style.display='block';
+    const completed = Object.values(state.scores).reduce((a,b)=>a+b,0);
+    if(state.gameEnded) modeLine.textContent = '游戏结束';
+    else if(state.config.mode==='firstTo') modeLine.textContent = `先到 ${state.config.target} 分获胜`;
+    else modeLine.textContent = `第 ${Math.min(completed+(state.roundActive?1:0),state.config.target)} / ${state.config.target} 局`;
   }
 
   // banner
@@ -548,6 +607,11 @@ function render(roundWon,winPayload){
       banner.className='banner';
       banner.textContent='点「再来一局」开始';
     }
+  } else if(state.gameEnded){
+    banner.className='banner win';
+    const max = Math.max(0,...Object.values(state.scores));
+    const winners = state.roster.filter(p=>(state.scores[p.id]||0)===max && max>0).map(p=>p.name);
+    banner.textContent = winners.length===0 ? '🏆 游戏结束' : (winners.length===1 ? `🏆 ${winners[0]} 获胜！(${max} 分)` : `🏆 ${winners.join(' / ')} 并列第一 (${max} 分)`);
   } else if(roundWon && winPayload){
     banner.className='banner win';
     banner.textContent=`🎉 ${winPayload.guesserName} 猜中 ${winPayload.number}！答案就是它`;
@@ -583,7 +647,9 @@ function render(roundWon,winPayload){
   const hc=document.getElementById('hostControls');
   if(!state.roundActive && (solo || state.isHost)){
     hc.style.display='flex';
-    document.getElementById('btnStart').textContent = solo ? '再来一局' : (state.round===0?'开始游戏':'开下一局');
+    document.getElementById('btnStart').textContent = solo
+      ? '再来一局'
+      : (state.gameEnded ? '重新开始一轮' : (state.round===0?'开始游戏':'开下一局'));
   } else hc.style.display='none';
 
   // dealer skip control (multiplayer only)
@@ -603,7 +669,8 @@ document.getElementById('btnCopy').onclick=async()=>{
 function leaveRoom(){
   if(state.channel){ state.supa.removeChannel(state.channel); state.channel=null; }
   Object.assign(state,{room:'',roster:[],scores:{},round:0,dealerId:null,
-    currentTurnId:null,turnOrder:[],secret:'',roundActive:false,isHost:false,presentIds:new Set(),notes:{},posNotes:{},singlePlayer:false});
+    currentTurnId:null,turnOrder:[],secret:'',roundActive:false,isHost:false,presentIds:new Set(),notes:{},posNotes:{},singlePlayer:false,
+    config:{mode:'endless',target:3},gameEnded:false});
   clearNotes();
 }
 document.getElementById('btnLeave').onclick=()=>{
